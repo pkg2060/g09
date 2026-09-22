@@ -2,7 +2,25 @@
 
 1분 간격의 센서 데이터에서 정상 운전 패턴을 학습하고, 현재 값과 복원값의 차이로 이상 징후를 감지하는 TranAD 기반 Early Warning System입니다. 진동 Spectrum 대신 센서 시계열을 사용합니다.
 
-이 저장소는 최종 A 전달본의 실행 소스와 선정 설정을 제공합니다. 실제 운전 데이터, 학습 checkpoint, scaler, 평가 DB, 실제 시계열이 들어간 대시보드, Codex 세션 로그는 포함하지 않습니다. 실행에 필요한 데이터와 기존 모델은 별도로 준비합니다.
+이 저장소는 최종 A 전달본의 실행 소스, 선정 설정과 최종 통합 HTML을 제공합니다. HTML에는 그래프를 확인할 수 있도록 실제 센서 시계열과 평가 결과가 내장되어 있습니다. 별도 원본 CSV, 학습 checkpoint, scaler, 평가 DB, Codex 세션 로그는 포함하지 않습니다. 모델을 다시 실행할 때 필요한 데이터와 기존 모델은 별도로 준비합니다.
+
+## 최종 결과 HTML
+
+[최종 통합 HTML 다운로드](https://github.com/pkg2060/g09/raw/refs/heads/main/reports/EWS_final_offline.html) · [파일 위치](reports/EWS_final_offline.html)
+
+다운로드한 `EWS_final_offline.html`을 Chrome 또는 Edge에서 열면 SageMaker에 접속하지 않고 최종 정리 화면과 선정 모델의 대시보드를 볼 수 있습니다. Tag 그래프의 확대·축소, 실험 기록, 랄프 증거와 저장된 SHAP 분석을 한 파일에 포함했습니다. SHAP 탭의 저장된 분석 구간은 2026년 6월 3일 14:00부터 14:10까지이며, 새로운 구간의 SHAP 계산에는 Python 실행 환경이 필요합니다.
+
+HTML은 원본 그대로 약 229 MiB이며 Git LFS로 관리합니다. GitHub 화면에서 직접 실행되는 페이지가 아니므로 위 링크로 파일을 다운로드해서 여세요. 저장소를 clone해서 받을 경우 Git LFS를 설치한 뒤 `git lfs pull`을 실행하세요.
+
+## Vercel 웹 화면
+
+[EWS 최종 결과 사이트](https://g09project.vercel.app)
+
+연결된 Vercel 프로젝트 `g09_project`는 `main` 변경을 배포합니다. `vercel.json`의 빌드 명령은 원본 HTML을 검증한 뒤 `site/`에 정적 웹 화면을 생성합니다. 첫 화면에는 최종 정리를 표시하고, 대시보드의 시계열은 Tag를 선택할 때 불러옵니다. 전체 데이터 포인트와 저장된 SHAP 결과를 유지합니다.
+
+웹 배포는 완료된 결과를 조회하는 용도입니다. Python 모델 학습·추론·새 SHAP 계산은 위 웹 서버에서 실행하지 않으며, 아래 실행 환경에서 별도로 수행합니다.
+
+Node.js 22에서 로컬 웹 산출물을 생성하려면 `npm run build`를 실행하세요. Git LFS 원본이 내려받아지지 않은 빌드 환경에서는 공개 GitHub 파일을 받은 뒤 크기와 고정 SHA-256을 검증합니다. 원본이 달라지면 빌드는 실패하도록 구성했습니다. 생성된 `site/`만 웹에 배포하며, Python 실행 소스나 로컬 파일은 웹 경로로 노출하지 않습니다.
 
 ## 주요 기능
 
@@ -32,6 +50,7 @@ src/
   vendor/                  외부 코드와 라이선스 고지
 data/README.md             입력 데이터 안내
 docs/THIRD_PARTY.md        출처와 파일별 라이선스
+reports/EWS_final_offline.html  최종 정리 + 오프라인 대시보드 (Git LFS)
 ```
 
 ## 실행 환경

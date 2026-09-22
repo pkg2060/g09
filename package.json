@@ -1,0 +1,7 @@
+{
+  "name": "rotating-equipment-ews-report",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {"node": "22.x"},
+  "scripts": {"build": "node tools/build-site.mjs && node tools/verify-site.mjs"}
+}

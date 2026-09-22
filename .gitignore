@@ -49,3 +49,8 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+
+# Reproducible Vercel static output and local tooling
+/site/
+/.vercel/
+/node_modules/
