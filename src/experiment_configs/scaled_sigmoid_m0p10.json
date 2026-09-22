@@ -1,0 +1,5 @@
+{
+  "model": {"window": 10, "dropout": 0.0, "ff_dim": 32, "output_activation": "scaled_sigmoid", "output_margin": 0.1},
+  "train": {"epochs": 10, "min_epochs": 10, "max_epochs": 30, "lr": 0.001, "objective": "l1", "seed": 42, "resume_from": null, "early_stopping": true},
+  "deadline_utc": "2026-09-21T22:00:00+00:00"
+}

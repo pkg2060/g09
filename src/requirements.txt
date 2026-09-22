@@ -1,0 +1,10 @@
+# Tested target: SageMaker Python 3.12 / PyTorch 2.8 CUDA on Tesla T4.
+# Install torch's CUDA wheel through its official channel if CUDA is absent.
+numpy
+pandas
+scikit-learn
+scipy
+matplotlib
+tqdm
+pytest
+torch>=2.0

@@ -1,0 +1,109 @@
+{
+  "source": "rtdb_csv",
+  "data": {
+    "timestamp": "DateTime",
+    "validation_fraction": 0.2,
+    "sample_minutes": 1,
+    "missing_policy": "error",
+    "sensor_suffix": ".PV",
+    "label_prefix": "Alarm_",
+    "stop_label": "Inhibit"
+  },
+  "model": {
+    "window": 30,
+    "dropout": 0.05,
+    "ff_dim": 64,
+    "encoder_layers": 1,
+    "decoder_layers": 1,
+    "n_heads": 7,
+    "dtype": "float32",
+    "output_activation": "linear"
+  },
+  "train": {
+    "epochs": 15,
+    "max_epochs": 30,
+    "lr": 0.0003,
+    "weight_decay": 1e-05,
+    "scheduler_step": 5,
+    "scheduler_gamma": 0.9,
+    "patience": 3,
+    "min_delta": 1e-05,
+    "batch_size": 128,
+    "seed": 42,
+    "grad_clip": 1.0,
+    "num_workers": 2,
+    "shuffle": true,
+    "resume_from": null,
+    "early_stopping": false,
+    "progress_every_batches": 500,
+    "progress_every_seconds": 30,
+    "min_epochs": 10,
+    "objective": "huber",
+    "huber_delta": 0.05,
+    "l1_weight": 0.5,
+    "save_epoch_checkpoints": true,
+    "inference_batch_size": 2048
+  },
+  "threshold": {
+    "method": "manual",
+    "manual": 0.2,
+    "per_tag": {},
+    "percentile": 99.5,
+    "sigma": 3.0,
+    "level": 0.98,
+    "q": 0.0001,
+    "reference_split": "validation",
+    "reuse_saved_on_eval": true
+  },
+  "alarm": {
+    "enabled": true,
+    "mode": "or",
+    "release_hold_minutes": 1,
+    "conditions": [
+      {
+        "tag": "PDC4303_7.PV",
+        "op": "<=",
+        "value": 0.2
+      },
+      {
+        "tag": "PPVI43032A.PV",
+        "op": "<=",
+        "value": 2.5
+      }
+    ]
+  },
+  "success": {
+    "normalized_test_mae_lt": 0.02,
+    "every_tag_accuracy_ge": 0.95
+  },
+  "deadline_utc": null,
+  "report": {
+    "max_chart_points": 2500,
+    "dpi": 120,
+    "export_database": true,
+    "dashboard": true,
+    "static_plots": true
+  },
+  "explain": {
+    "server_port": 8767,
+    "exact_max_features": 8,
+    "permutations": 16,
+    "max_duration_minutes": 1440,
+    "inference_batch_size": 2048,
+    "cache_size": 8
+  },
+  "search": {
+    "seed_epochs": 10,
+    "maximum_epochs": 30,
+    "maximum_consecutive_errors": 3,
+    "continue_until_deadline": true,
+    "deadline_utc": null,
+    "manual_threshold_candidates": [
+      0.2,
+      0.15,
+      0.1,
+      0.05,
+      0.02
+    ]
+  }
+}
