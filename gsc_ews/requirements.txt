@@ -1,0 +1,11 @@
+# 서버 CUDA 드라이버와 검증 환경에 맞는 버전을 사용한다.
+torch==2.8.0
+lightning==2.5.5
+numpy>=1.23
+pandas==2.3.3
+PyYAML>=6.0
+scipy>=1.10
+scikit-learn>=1.2
+matplotlib>=3.7
+openpyxl>=3.1
+shap>=0.46,<1

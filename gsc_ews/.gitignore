@@ -1,0 +1,72 @@
+# Python 캐시와 빌드 산출물
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# 가상환경과 패키지 캐시
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.cache/
+
+# 원본 데이터와 전처리 데이터
+data/
+datasets/
+processed_data/
+
+# 모델 가중치와 정규화 상태
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+
+# 학습 로그와 평가·시각화 산출물
+logs/
+lightning_logs/
+results/
+outputs/
+plots/
+reports/
+wandb/
+mlruns/
+mlartifacts/
+*.log
+
+# 로컬 인증 정보와 비밀 설정
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# 편집기·운영체제 파일과 임시 백업
+.vscode/
+.idea/
+.ipynb_checkpoints/
+.DS_Store
+.AppleDouble
+._*
+*.swp
+*.swo
+*~
+.backups/
+backups/
