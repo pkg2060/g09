@@ -1,0 +1,592 @@
+# ==============================================================================
+# GSC_EWS 통합 실행 설정
+# ==============================================================================
+# 이 파일은 데이터 준비, 모델 학습, 평가, 온라인 추론에 필요한 공통 설정을 관리한다.
+# 값을 바꾼 뒤 실행하면 별도의 Python 설정 파일 없이 변경 내용이 적용된다.
+#
+# 사용 시 주의사항
+# - 상대 경로는 이 YAML 파일이 있는 configs/ 폴더를 기준으로 해석한다.
+#   예: ../data는 프로젝트의 projects/gsc_ews/data를 의미한다.
+# - null은 값을 지정하지 않았다는 의미다. 문자열 "null"과 다르므로 따옴표를 붙이지 않는다.
+# - null은 각 항목의 주석에 "null이면 ..."이라고 명시된 경우에만 사용할 수 있다.
+#   그 밖의 필수 항목에 null을 입력하면 설정 검증 단계에서 오류로 중단한다.
+# - null 허용 항목도 설정 키 자체를 삭제하면 안 된다. 키는 유지하고 값만 null로 입력한다.
+# - null이 아닌 값은 각 항목 주석의 자료형·선택지·예시를 따라 입력한다.
+# - evaluate/online은 같은 학습 실행에서 생성된 checkpoint와 calibration을 함께 사용해야 한다.
+# - analyze는 checkpoint와 분석 CSV만 사용하며 SHAP을 켜면 정상 background CSV가 추가로 필요하다.
+# - 모델 입력 특성의 이름과 순서는 학습·평가·온라인에서 동일해야 한다.
+#
+# 기존 config.py의 주요 변수명 대응
+# - CSV_TRAIN_PATH                  → data.train_path
+# - CSV_TEST_PATH                   → data.test_path
+# - CSV_LABELS_PATH                 → data.labels_path
+# - CSV_TIMESTAMP_COL               → data.timestamp_column
+# - CSV_FEATURE_COLS, FEATURE_NAMES → data.feature_columns
+# - WINDOW_SIZE                     → models.<모델명>.window_size
+# - N_ENCODER_LAYERS                → models.<모델명>.encoder_layers
+# - N_DECODER_LAYERS                → models.<모델명>.decoder_layers
+# - N_HEADS                         → models.<모델명>.num_heads
+# - DIM_FEEDFORWARD                 → models.<모델명>.dim_feedforward
+# - D_MODEL                         → models.<모델명>.d_model
+# - NUM_EPOCHS                      → models.<모델명>.epochs
+# - LEARNING_RATE                   → models.<모델명>.learning_rate
+# - WEIGHT_DECAY                    → models.<모델명>.weight_decay
+# - BATCH_SIZE                      → dataloader.batch_size
+# - VALIDATION_SPLIT                → dataloader.validation_ratio
+# - SCORING_METHOD                  → models.<모델명>.anomaly_score
+# - NORMALIZATION                   → data.normalization.method
+# - NORMALIZATION_EPSILON           → data.normalization.epsilon
+# - NORMALIZATION_CLIP_TEST         → data.normalization.clip
+# - EARLY_STOPPING_*                → training.early_stopping.*
+# - LR_SCHEDULER_*                  → training.scheduler_*
+# - CHECKPOINT_DIR                  → training.checkpoint.directory
+# - LOGS_DIR                        → training.log_directory
+# - RESULTS_DIR                     → output.directory
+# - DEVICE                          → run.device
+# - RANDOM_SEED                     → run.seed
+#
+# 현재 파이프라인에서 제거되거나 자동 처리되는 기존 항목
+# - DATA_SOURCE, BENCHMARK_*: 현재 DataLoader는 고객사 CSV 입력을 사용한다.
+# - TRAIN_TEST_SPLIT_RATIO: Train/Test 파일을 명시적으로 분리해 지정한다.
+# - CHECKPOINT_FILENAME: Lightning이 실행 폴더 아래에 최적 체크포인트명을 자동 생성한다.
+# - META_LEARNING_RATE: 기존 코드에서도 사용되지 않아 제거했다.
+# - ADVERSARIAL_EPSILON: Epoch 기반 Phase 1·2 가중치로 대체했다.
+# - ONLINE_CLEANUP_MODE, ONLINE_LAST_PROCESSED_FILE: SQLite 상태 저장으로 대체했다.
+# - ONLINE_AUTO_RETRAIN: 온라인은 추론만 수행하며 자동 재학습하지 않는다.
+# ==============================================================================
+
+# ==============================================================================
+# 1. 실행 대상 식별
+# ==============================================================================
+
+# 사용할 딥러닝 모델. 아래 models에 같은 이름의 설정이 있어야 한다.
+# options: tranad, tranad_v2, tft, lstm_ae
+active_model: tranad_v2
+
+# 모델 버전. 결과·로그·체크포인트 경로 구분에 사용한다.
+# 형식: v<주버전>_<부버전>_<패치버전>, 예: v0_1_0
+model_version: v0_1_0
+
+# 설비 식별자. 결과 경로의 최상위 폴더명이 된다.
+# 영문자, 숫자, 밑줄(_), 하이픈(-)만 사용한다.
+equipment_id: equipment_1
+
+# ==============================================================================
+# 2. 실행 모드 및 실행 파일
+#    기존 DEVICE, RANDOM_SEED와 실행 스크립트 인자를 통합한 영역이다.
+# ==============================================================================
+run:
+  # full:     학습 → Calibration → Test 추론 → 알람·평가 저장
+  #           TimeSeriesSplit=true일 때만 Fold 학습 후 전체 정상 데이터를 재학습한다.
+  # train:    학습·검증·최종 체크포인트·로그·Calibration 저장. Test 추론은 수행하지 않음
+  # evaluate: 저장된 checkpoint와 calibration로 지정 Test 데이터를 한 번에 추론
+  # online:   저장된 checkpoint와 calibration를 로드하고 입력 CSV의 새 행만 지속 추론
+  # analyze:  저장된 checkpoint로 Attention·변수 중요도·SHAP만 생성. Calibration 불필요
+  mode: full
+
+  # evaluate/online/analyze에서 사용할 Lightning 체크포인트(.ckpt).
+  # train/full은 새로 학습하므로 null이어야 한다.
+  checkpoint_path: null
+
+  # Calibration 결과 파일. 피처별 실제 Threshold와 점수 정규화 통계를 포함한다.
+  # evaluate/online에서 필수이며 checkpoint_path의 모델과 정확히 일치해야 한다.
+  calibration_path: null
+
+  # evaluate/analyze에서는 data.test_path를 덮어쓸 입력 CSV, online에서는 감시할 입력 CSV다.
+  # null이면 evaluate/analyze는 data.test_path를 사용한다. online에서는 반드시 지정한다.
+  # 기존 이름: ONLINE_INPUT_CSV
+  input_path: null
+
+  # analyze에서 SHAP의 정상 기준으로 사용할 학습 CSV다.
+  # analysis.shap=false이면 null 가능하고, true이면 반드시 정상 데이터 경로를 지정한다.
+  # Attention과 TFT 변수 중요도만 분석할 때는 사용하지 않는다.
+  background_path: null
+
+  # 실행 결과를 저장할 폴더를 직접 지정한다.
+  # null이면 <output.directory>/<설비>/<모델>/<버전>/<실행ID> 구조를 자동 사용한다.
+  output_directory: null
+
+  # 한 번의 실행을 구분하는 이름. 영문자, 숫자, 밑줄(_), 하이픈(-)만 허용한다.
+  # null이면 <날짜시각>_<UUID 8자리> 형식으로 자동 생성한다.
+  run_id: null
+
+  # true이면 학습·검증을 각각 한 Batch만 실행해 연결 상태를 빠르게 확인한다.
+  # 모델 성능 확인용이 아니며 train 모드에서만 사용할 수 있다.
+  fast_dev_run: false
+
+  # 난수 시드와 재현성 설정. 동일 환경에서 데이터 분할과 초기화를 재현할 때 사용한다.
+  # 기존 이름: RANDOM_SEED, DEVICE
+  seed: 42
+  device: auto               # auto | cpu | cuda | gpu | mps
+  deterministic: true        # true이면 가능한 연산을 결정적으로 실행한다. 속도가 다소 느려질 수 있다.
+
+# ==============================================================================
+# 3. 데이터 입력 및 정규화
+#    기존 CSV_*·FEATURE_NAMES·NORMALIZATION_* 설정에 해당한다.
+# ==============================================================================
+data:
+  # 학습 CSV와 선택적 학습 라벨 CSV.
+  # train_labels_path를 지정하면 어느 피처든 label=1인 행을 이상으로 보고 학습에서 제외한다.
+  # 라벨 파일이 없으면 null로 두며, 원본 데이터의 숫자 0은 라벨이 아니라 측정값으로 취급한다.
+  train_path: "../data/sample1 - 진동 증가 경향 확인 용도/train.csv"
+  train_labels_path: null
+
+  # full/evaluate에서 추론할 Test CSV와 정답 라벨 CSV.
+  # labels_path가 null이면 추론·점수·알람은 저장하지만 Precision/Recall 등 지도 지표는 계산하지 않는다.
+  test_path: "../data/sample1 - 진동 증가 경향 확인 용도/test.csv"
+  labels_path: null
+
+  # 설비·Tag별 표시명을 제공하는 선택적 CSV. null이면 Plot에는 Tag ID만 표시한다.
+  # 컬럼은 Equipment, RTDB Tag ID, TagDescription이며 현재 파일의 설명은 연동 시험용 임시값이다.
+  # 향후 Description DB 연결 시 같은 결과 매핑을 반환하는 조회 함수로 교체할 수 있다.
+  tag_description_path: ../data/tag_description.csv
+
+  # 설비·Tag별 CRV 4단계 Band를 제공하는 CSV. null이면 CRV 알람과 Plot 기준선을 사용하지 않는다.
+  # 컬럼은 Equipment, RTDB Tag ID, Pre Alarm Low, Pre Alarm High, Alarm Low, Alarm High,
+  # Trip Limit, EWS Threshold 순서다. Trip Limit과 EWS Threshold는 Phase 2 연결용으로 보존한다.
+  crv_path: ../data/crv.csv
+
+  # CSV의 시간 컬럼명. 파싱할 수 없는 시간은 prepare_time_index 설정에 따라 제거하거나 오류 처리한다.
+  # 기존 이름: CSV_TIMESTAMP_COL
+  timestamp_column: DateTime
+
+  # 모델에 입력할 피처 컬럼과 순서.
+  # null이면 timestamp를 제외한 모든 컬럼을 CSV 순서대로 사용한다.
+  # 목록을 지정하면 학습·Test·Online CSV에 동일한 이름이 있어야 한다.
+  # 기존 이름: CSV_FEATURE_COLS, FEATURE_NAMES
+  feature_columns: null
+
+  # 라벨 CSV에서 사용할 컬럼 목록.
+  # null이면 피처명과 같은 라벨 컬럼을 우선 사용하고, 단일 라벨은 모든 피처에 복제한다.
+  label_columns: null
+
+  # 정상 데이터의 예상 수집 간격과 Window 단절 기준.
+  # 현재 값은 60초 × 1.5 = 90초를 초과하는 간격에서 새 Segment를 시작한다.
+  # Window는 Segment 경계를 넘어 생성되지 않는다.
+  expected_interval_seconds: 60
+  max_gap_multiplier: 1.5
+
+  # 스케일러는 각 Train 구간에만 fit하여 Validation/Test 정보 누출을 막는다.
+  # TimeSeriesSplit=true의 최종 운영 모델만 전체 정상 학습 데이터에 다시 fit한다.
+  normalization:
+    # minmax: 학습 최솟값·최댓값 기준 / standard: 평균·표준편차 / robust: 중앙값·IQR / none: 미적용
+    # 기존 이름: NORMALIZATION. 기존 zscore는 standard로 이름이 변경되었다.
+    method: minmax
+
+    # 0으로 나누는 문제를 막는 최소 분모값. 일반적으로 변경하지 않는다.
+    # 기존 이름: NORMALIZATION_EPSILON
+    epsilon: 1.0e-8
+
+    # minmax에서만 사용한다.
+    # false: 학습 범위를 벗어난 값이 0 미만 또는 1 초과가 되도록 허용하여 이상 증가량을 보존한다.
+    # true: 변환 결과를 [0, 1]로 제한한다. 큰 이상값도 경계값으로 잘릴 수 있다.
+    # 기존 이름: NORMALIZATION_CLIP_TEST
+    clip: false
+
+    # robust에서만 사용한다. [25, 75]는 Q1~Q3 범위(IQR)를 스케일로 사용한다.
+    quantile_range: [25, 75]
+
+# ==============================================================================
+# 4. 전처리 순서
+#    steps는 위에서 아래 순서로 실행한다. name은 src/preprocessing.py 등록명과 일치해야 한다.
+#    enabled=false인 단계는 건너뛴다.
+# ==============================================================================
+preprocessing:
+  # Train과 Validation에 적용할 결측 처리 방식이다.
+  # drop: 결측이 하나라도 있는 행 전체 제거
+  # forward_fill: 피처별 최근 정상값으로 최대 max_consecutive개까지 채움
+  # interpolate: 앞뒤 정상값으로 최대 max_consecutive개까지 보간하며 학습·검증에서만 사용
+  # Full의 Test, Evaluate, Online은 이 값과 관계없이 원본 결측을 INSTRUMENT_FAULT로 기록하고 추론하지 않는다.
+  # 예시,
+  # 원본:          10, NA, 14
+  # drop:          10,     14
+  # forward_fill:  10, 10, 14
+  # interpolate:   10, 12, 14
+  missing:
+    strategy: drop             # options: drop, forward_fill, interpolate
+    max_consecutive: 10        # 연속해서 채우거나 보간할 최대 결측 행 수
+    interpolation_method: time # options: time, linear. strategy=interpolate일 때만 사용
+    interpolation_direction: both # options: forward, backward, both. strategy=interpolate일 때만 사용
+
+  steps:
+    # 1) 시간 컬럼을 datetime으로 변환하고 시간순·중복을 정리한다.
+    - name: prepare_time_index
+      enabled: true
+      params:
+        drop_invalid: true      # true: 잘못된 시간을 제거 / false: 오류로 중단
+        sort: true              # 시간 오름차순 정렬
+        duplicate_keep: last    # 중복 시각에서 마지막 행 유지. first 또는 false도 사용 가능
+
+    # 2) 피처를 숫자로 변환한다. 숫자로 바꿀 수 없는 값은 결측값(NA)이 된다.
+    - name: coerce_numeric
+      enabled: true
+      params:
+        replace_infinite: true  # ±inf를 NA로 바꾸어 이후 결측 처리 단계로 전달
+
+    # 3) 지정 운전 태그로 공정 정지 구간을 판정한다.
+    #    임의 피처의 값 0만으로 정지를 판단하지 않는다.
+    #    Batch와 Online 모두 정지 행을 추론에서 제외하고, 정지 전후 Window를 서로 다른 구간으로 분리한다.
+    - name: drop_stopped
+      enabled: false            # 실제 운전 태그와 임계값을 확정한 뒤 true로 변경
+      params:
+        # variable은 feature_columns에 포함된 정확한 태그명, value는 원본 공정 단위다.
+        # 지원 operator: <, <=, >, >=
+        conditions: []          # 예: [{variable: Motor_Power.PV, operator: '<', value: 5.0}]
+        logic: any              # any: 하나라도 만족하면 정지(OR), all: 모두 만족하면 정지(AND)
+
+# ==============================================================================
+# 5. Validation 분할 및 PyTorch DataLoader
+#    기존 BATCH_SIZE·VALIDATION_SPLIT에 해당한다.
+# ==============================================================================
+dataloader:
+  # true: 미래가 과거 학습에 섞이지 않는 확장형 TimeSeriesSplit을 수행한다.
+  # false: 시간순 앞 구간을 Train, 마지막 구간을 Validation으로 한 번만 분리한다.
+  time_series_split_enabled: false
+
+  # time_series_split_enabled=true일 때만 사용한다.
+  # 5이면 Fold 5개를 각각 학습·검증한 뒤, Fold별 최적 Epoch의 중앙값으로 전체 정상 데이터를 재학습한다.
+  time_series_splits: 5
+
+  # time_series_split_enabled=false일 때만 사용한다.
+  # 0.2이면 시간순 마지막 20%가 Validation, 앞 80%가 Train이며 무작위 분할하지 않는다.
+  # 이 경우 Fold 및 전체 데이터 재학습 없이 Validation loss가 가장 낮은 Checkpoint를 운영 모델로 사용한다.
+  # 기존 이름: VALIDATION_SPLIT
+  validation_ratio: 0.2
+
+  # 학습과 평가/추론의 Batch 크기. GPU 메모리가 부족하면 값을 줄인다.
+  # 기존 BATCH_SIZE는 batch_size로 이름이 변경되었다.
+  batch_size: 128
+  eval_batch_size: 4096
+
+  # 시계열 순서를 유지하기 위해 학습 데이터도 기본적으로 섞지 않는다.
+  shuffle_train: false
+
+  # DataLoader 병렬 작업 수. 0은 현재 Process에서 로드하며 가장 호환성이 높다.
+  num_workers: 0
+
+  # CUDA 사용 시 CPU 고정 메모리를 사용해 전송을 빠르게 할 수 있다.
+  pin_memory: true
+
+  # false이면 마지막의 작은 Batch도 사용한다. 데이터 손실을 피하기 위한 기본값이다.
+  drop_last: false
+
+  # true이면 시계열 시작부에 부족한 과거값을 첫 관측값으로 채워 처음부터 예측한다.
+  # false이면 window_size만큼 관측값이 모인 뒤 첫 예측을 생성한다.
+  pad_start: true
+
+# ==============================================================================
+# 6. 공통 학습 설정
+#    모델별 Epoch·Learning Rate는 아래 models에 있고, Trainer 공통 동작만 이곳에 둔다.
+# ==============================================================================
+training:
+  # options: adam, adamw. 기존 코드는 AdamW를 사용했다.
+  optimizer: adamw
+
+  # options: step_lr, none/null
+  scheduler: step_lr
+
+  # StepLR: scheduler_step_size Epoch마다 학습률에 scheduler_gamma를 곱한다.
+  # 현재 값은 5 Epoch마다 학습률을 90%로 감소시킨다.
+  # 기존 이름: LR_SCHEDULER_STEP_SIZE, LR_SCHEDULER_GAMMA
+  scheduler_step_size: 5
+  scheduler_gamma: 0.9
+
+  # 현재는 Validation loss만 최적 모델 선택 기준으로 지원한다.
+  validation_metric: loss
+
+  # CSV 학습 로그 저장 위치와 출력 주기.
+  # 기존 이름: LOGS_DIR. LOG_LEVEL·LOG_FILENAME은 Lightning 로그 구조로 대체되었다.
+  log_directory: ../logs
+  log_every_n_steps: 10
+  # false이면 Jupyter Widget 대신 Epoch별 시간·train_loss·val_loss·LR을 정적 문장으로 출력한다.
+  # 학습 이력은 값과 무관하게 metrics.csv에 항상 저장한다.
+  enable_progress_bar: true
+
+  early_stopping:
+    # Validation loss가 개선되지 않을 때 조기 종료할지 결정한다.
+    # 기존 이름: EARLY_STOPPING_ENABLED/PATIENCE/MIN_DELTA
+    enabled: true
+    patience: 3               # 연속 3 Epoch 동안 개선이 없으면 중단
+    min_delta: 1.0e-5         # 이 값보다 작은 loss 감소는 개선으로 보지 않음
+
+  checkpoint:
+    # 저장 경로는 <directory>/<설비>/<모델>/<버전>/<실행ID>/<fold> 구조로 확장된다.
+    # 기존 이름: CHECKPOINT_DIR. CHECKPOINT_FILENAME은 자동 파일명으로 대체되었다.
+    directory: ../checkpoints
+    save_best_only: true       # Validation loss가 가장 낮은 체크포인트와 last를 관리
+
+    # 독립 evaluate/online에 필요하므로 full 모드에서는 둘 다 true여야 한다.
+    include_scaler: true       # 학습 스케일러 파라미터 저장
+    include_feature_schema: true # 피처 이름·순서와 전처리 계약 저장
+
+# ==============================================================================
+# 7. 모델별 설정
+#    active_model로 선택한 블록만 학습에 사용한다.
+# ==============================================================================
+models:
+  # ---------------------------------------------------------------------------
+  # 7-1. TranAD
+  # ---------------------------------------------------------------------------
+  tranad:
+    # 과거 몇 개 시점을 한 Window로 사용할지 결정한다.
+    # 작으면 급변에 민감하고, 크면 긴 추세를 반영하지만 학습량과 지연이 증가한다.
+    # 기존 이름: WINDOW_SIZE
+    window_size: 15
+
+    # float64는 수치 정밀도가 높지만 float32보다 메모리와 연산량이 크다.
+    dtype: float64
+
+    # Transformer 구조. d_model/num_heads가 null이면 피처 수를 기준으로 자동 결정한다.
+    # 기존 이름: D_MODEL, N_ENCODER_LAYERS, N_DECODER_LAYERS, N_HEADS, DIM_FEEDFORWARD
+    d_model: null              # null이면 특성 수의 두 배
+    encoder_layers: 1
+    decoder_layers: 1
+    num_heads: null            # null이면 특성 수
+    dim_feedforward: 32
+    dropout: 0.1               # 과적합 방지 비율. 0이면 Dropout 미적용
+
+    # 학습 횟수와 최적화 설정.
+    # 기존 이름: NUM_EPOCHS, LEARNING_RATE, WEIGHT_DECAY
+    epochs: 30
+    learning_rate: 0.001
+    weight_decay: 1.0e-5
+    gradient_clip_val: 0.0     # 0이면 Gradient Clipping 미적용
+
+    # TranAD Phase 1·2 복원 MSE를 Epoch에 따라 가중 결합한다.
+    loss: phase1_phase2_mse
+    phase_weighting: epoch_dependent
+
+    # EWS에 전달할 원시 이상 점수.
+    # mae: Phase 2 평균 절대 오차 / phase2_mse: Phase 2 제곱 오차 / hybrid: 두 점수 결합
+    # 기존 SCORING_METHOD를 모델별 anomaly_score로 변경했다.
+    anomaly_score: mae
+    hybrid_mae_weight: 0.3     # hybrid일 때 MAE 30%, Phase 2 MSE 70%
+
+  # ---------------------------------------------------------------------------
+  # 7-2. TranAD v2
+  #      입출력 계약은 TranAD와 같지만 현재 개선 구현을 사용한다.
+  # ---------------------------------------------------------------------------
+  tranad_v2:
+    window_size: 15
+    dtype: float64
+
+    # TranAD v2 모델 구조
+    # d_model=64, num_heads=4, head_dim=16을 모델 내부 기본값으로 사용한다.
+    encoder_layers: 1
+    decoder_layers: 1
+    dim_feedforward: 32
+    dropout: 0.1
+
+    epochs: 30
+    learning_rate: 0.001
+    weight_decay: 1.0e-5
+    gradient_clip_val: 0.0
+    loss: phase1_phase2_mse
+    phase_weighting: epoch_dependent
+    anomaly_score: mae         # mae | phase2_mse | hybrid
+    hybrid_mae_weight: 0.3
+
+  # ---------------------------------------------------------------------------
+  # 7-3. TFT
+  # ---------------------------------------------------------------------------
+  tft:
+    window_size: 24
+    dtype: float32
+
+    # LSTM·Attention 내부 차원. hidden_size는 num_heads로 나누어 떨어져야 한다.
+    hidden_size: 64
+    num_heads: 4
+    lstm_layers: 1
+    dropout: 0.1
+
+    # 현재 공통 DataLoader는 마지막 한 시점 복원만 지원하므로 1을 유지한다.
+    forecast_horizon: 1
+
+    # VSN(Variable Selection Network)과 정적 변수 사용 여부.
+    use_vsn: true
+    use_static: false
+    n_static_vars: 1           # use_static=true일 때 사용할 정적 변수 수
+
+    # 예측할 분위수와 이상 판단에 사용할 하한·상한 분위수.
+    quantiles: [0.1, 0.5, 0.9]
+    qband_low: 0.1
+    qband_high: 0.9
+
+    epochs: 30
+    learning_rate: 0.001
+    weight_decay: 1.0e-5
+    gradient_clip_val: 1.0
+
+    # mse_quantile: 기존 MSE+Quantile 혼합 손실 / quantile: Quantile loss만 사용
+    loss: mse_quantile
+    quantile_loss_weight: 1.0
+
+    # quantile_loss | band_mse | median_mse | band_violation
+    anomaly_score: quantile_loss
+    qband_tolerance: 1.0       # 분위수 구간 위반 허용 폭 배수
+
+  # ---------------------------------------------------------------------------
+  # 7-4. LSTM AutoEncoder
+  # ---------------------------------------------------------------------------
+  lstm_ae:
+    window_size: 15
+    dtype: float32
+
+    hidden_size: 64
+    latent_size: 16            # Encoder가 압축할 잠재 공간 크기
+    num_layers: 1
+    num_heads: null            # LSTM-AE에서는 사용하지 않으므로 null 유지
+    dropout: 0.1               # num_layers가 2 이상일 때 LSTM 층 사이에 적용
+
+    epochs: 30
+    learning_rate: 0.001
+    weight_decay: 1.0e-5
+    gradient_clip_val: 1.0
+    loss: mse                  # Window 전체 복원 MSE
+    anomaly_score: mae         # mae | mse | hybrid. 마지막 시점의 복원 오차 사용
+    hybrid_mae_weight: 0.3     # hybrid일 때 MAE 비중
+
+# ==============================================================================
+# 8. Calibration 계산 규칙
+#    train/full에서 Validation 정상 점수로 score 정규화 통계와 피처별 Threshold를 계산한다.
+#    계산 결과는 calibration.yaml에 저장하며 evaluate/online에서는 이 규칙을 다시 계산하지 않는다.
+#    config.yaml은 결과 폴더에 스냅샷으로 저장되므로 calibration.yaml에 계산 규칙을 중복 저장하지 않는다.
+# ==============================================================================
+calibration_rules:
+  postprocessing:
+    # 현재와 과거 점수만 사용하는 이동 평균 Window. 1이면 평활화하지 않는다.
+    # 값을 키우면 순간 노이즈는 줄지만 이상 감지 시점이 늦어질 수 있다.
+    smooth_window: 1
+
+    # 점수 정규화 방식. 두 방식을 동시에 켤 수 없으므로 하나의 값으로 선택한다.
+    # none:     정규화하지 않고 모델의 raw score를 그대로 사용한다.
+    # robust:   정상 Calibration 점수의 중앙값과 MAD로 피처별 점수를 정규화한다.
+    # quantile: 정상 Calibration 점수의 지정 분위수로 피처별 점수를 정규화한다.
+    # options: none, robust, quantile
+    normalization_method: quantile
+
+    # normalization_method=quantile일 때 사용할 정상 점수 분위수.
+    quantile_level: 0.99
+
+    # quantile 방식에서 피처별 정규화 점수와 샘플 전체 평균 raw score를 결합하는 비중.
+    # 0이면 피처별 점수만, 1이면 전체 평균 점수만 사용하며 0.5이면 동일 비중으로 결합한다.
+    mae_weight: 0.5
+
+  threshold:
+    # 피처별 Threshold를 계산하는 방법이다.
+    # manual: 사용자가 default/per_variable에 입력한 값 사용
+    # percentile: 정상 Calibration 점수의 지정 백분위수 사용
+    # sigma: 정상 Calibration 점수의 평균 + sigma_k×표준편차 사용
+    # pot: Peak Over Threshold로 정상 점수의 꼬리 분포 추정
+    # TFT를 사용할 때도 자동 변경되지 않으므로 필요한 방법을 직접 선택한다.
+    method: percentile          # manual | percentile | sigma | pot
+
+    # method=manual일 때 per_variable에 없는 피처에 적용할 공통값이다.
+    default: 0.2
+
+    # 피처별 수동 Threshold. 원본 공정값이 아닌 Anomaly Score 기준값이다.
+    # method가 자동 계산 방식이어도 지정한 피처는 이 값으로 덮어쓴다.
+    # 예: {Motor_Power.PV: 0.18, Bearing_Vibration.PV: 0.35}
+    # 실제 학습 피처에 없는 이름을 입력하면 학습 전에 오류로 중단한다.
+    per_variable: {}
+
+    # method=percentile일 때 사용할 정상 Calibration 점수의 백분위수.
+    percentile: 99.5
+
+    # method=sigma일 때 평균에 더할 표준편차 배수.
+    sigma_k: 3.0
+
+    # 아래 값은 method=pot일 때만 사용한다.
+    pot_risk: 0.0001
+    pot_init_quantile: 0.98
+    pot_multiplier: 1.0
+
+# ==============================================================================
+# 9. Alarm 기본 규칙
+#    train/full은 아래 값을 생성되는 calibration.yaml의 alarm에 복사한다.
+#    evaluate/online은 Config의 기본값이 아니라 calibration.yaml의 alarm을 사용한다.
+#    운영 중 Threshold와 Alarm을 함께 조정할 수 있도록 실제 적용값을 한 파일로 관리한다.
+# ==============================================================================
+alarm_rules:
+  # Anomaly Score가 해당 피처 Threshold의 몇 배인지에 따라 알람 단계를 결정한다.
+  # CAUTION은 Threshold 초과, WARNING은 Threshold의 1.5배 이상을 의미한다.
+  levels:
+    CAUTION: 1.0
+    WARNING: 1.5
+
+  # Threshold 초과가 연속으로 몇 번 발생해야 알람을 확정할지 지정한다.
+  consecutive_count: 3
+
+  # 같은 시점에 이상이어야 하는 최소 피처 수다.
+  min_variables: 1
+
+  # 같은 알람 이벤트가 반복 저장되는 것을 제한하는 시간(초)이다.
+  cooldown_seconds: 60
+
+  # 공정 정지·비운전 조건에서 Anomaly Score는 기록하고 알람만 억제할지 결정한다.
+  inhibit_enabled: true
+
+  # variable은 학습 피처명, operator는 <, <=, >, >=, ==, !=, value는 원본 공정 단위다.
+  # 예: [{variable: Motor_Power.PV, operator: '<', value: 5.0}]
+  inhibit_conditions: []
+
+  # any: 하나라도 만족하면 억제(OR), all: 모두 만족하면 억제(AND)
+  inhibit_logic: any
+
+# ==============================================================================
+# 10. 평가
+# ==============================================================================
+evaluation:
+  # true: 라벨이 있으면 탐지 지표를 계산하고 복원 품질 보고서를 생성한다.
+  # false: 지표·품질 보고서를 생략하고 추론·점수·알람만 저장한다.
+  # 기존 RECONSTRUCTION_QUALITY_ENABLED의 역할을 포함한다.
+  enabled: true
+
+# ==============================================================================
+# 11. 결과 저장 및 해석
+# ==============================================================================
+output:
+  # 기본 결과 루트. 실제 실행은 <설비>/<모델>/<버전>/<실행ID>가 뒤에 붙는다.
+  # 기존 이름: RESULTS_DIR, OUTPUT_SAVE_DIR
+  directory: ../results
+
+  # CSV(predictions.csv, alarms.csv)는 고정 산출물이며 아래 옵션과 관계없이 저장된다.
+  # excel/plots는 추가 보고서 생성 여부만 제어한다.
+  excel: true
+  plots: true
+  plot_dpi: 150               # 기존 이름: PLOT_DPI
+
+analysis:
+  # analyze 모드에서 분석할 시간 범위. null이면 해당 경계를 제한하지 않는다.
+  # 두 경계는 포함되며 입력 CSV의 DateTime과 같은 기준 시각을 사용한다.
+  # YAML이 날짜 객체로 바꾸지 않도록 반드시 따옴표로 감싼다.
+  # CLI의 --analyze-start, --analyze-end로 이번 실행에서만 덮어쓸 수 있다.
+  input_start: null            # 예: "2026-01-01 00:00:00"
+  input_end: null              # 예: "2026-01-02 23:59:59"
+
+  # 분석에 사용할 최대 Window 수와 표시할 상위 피처 수.
+  # 값을 크게 하면 분석 시간과 메모리 사용량이 증가한다.
+  max_samples: 100
+  top_k: 20
+
+  attention: true             # Attention을 제공하는 모델에서 중요도 저장
+  # analyze는 기본적으로 SHAP까지 수행하므로 정상 배경 CSV와 requirements-analysis.txt가 필요하다.
+  shap: true
+  # null: 전체 평균 점수 / 변수명: 단일 변수 / [변수명1, 변수명2]: 각 변수 점수를 별도 해석
+  # CLI에서는 --shap-target "Motor_Power.PV" "Pump_RPM.PV"처럼 공백으로 구분한다.
+  shap_target: null
+  shap_method: gradient       # gradient(기본·빠름) | kernel | permutation
+  background_samples: 100     # 학습 구간에서만 선택하는 SHAP 배경 Window 수
+  shap_nsamples: 100          # SHAP 근사 계산 샘플 수
+
+# ==============================================================================
+# 12. Online 추론
+# ==============================================================================
+online:
+  # 입력 CSV에 새 행이 추가되었는지 확인하는 간격(초).
+  # 기존 이름: ONLINE_POLL_INTERVAL_SECONDS
+  poll_interval_seconds: 60
+
+  # Online Window·점수·알람·마지막 처리 상태를 원자적으로 저장하는 SQLite 파일명.
+  # 재시작하면 이 상태를 읽어 이미 처리한 행을 다시 추론하지 않는다.
+  database_filename: online.sqlite3

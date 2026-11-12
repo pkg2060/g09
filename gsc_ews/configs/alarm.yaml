@@ -1,0 +1,11 @@
+# 두 모델이 공유하는 알람 규칙. 모델별 차이는 model_overrides에 지정한다.
+levels: {WARNING: 1.0, ALERT: 1.5, CRITICAL: 2.0, EMERGENCY: 3.0}
+consecutive_count: 3        # 연속 N회 이상 감지 시에만 알람 발생
+min_variables: 1
+cooldown_seconds: 60        # 상태값은 유지하고 알람 이벤트의 반복 기록을 제한한다.
+inhibit_enabled: true
+# Online 계기 이상 알람도 아래 운전 정지 조건에서는 억제한다.
+inhibit_conditions: []      # 예: [{variable: Motor_Power.PV, operator: '<', value: 5.0}]
+inhibit_logic: any           # any는 OR, all은 AND. 원본 단위의 값으로 비교한다.
+
+model_overrides: {}
